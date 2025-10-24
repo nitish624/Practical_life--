@@ -6,7 +6,19 @@ Y="$(printf '\033[1;33m')"
 W="$(printf '\033[1;37m')"
 C="$(printf '\033[1;36m')"
 arch=$(uname -m)
-username=$(getent group sudo | awk -F ':' '{print $4}' | cut -d ',' -f1)
+# username=$(getent group sudo | awk -F ':' '{print $4}' | cut -d ',' -f1) # Termux पर 'sudo' समूह का उपयोग करने से बचें
+
+# Termux environment में, उपयोगकर्ता नाम 'root' हो सकता है यदि स्क्रिप्ट sudo के साथ चल रही है,
+# लेकिन अगर 'proot' के अंदर चल रही है, तो यह 'android' या कोई अन्य उपयोगकर्ता हो सकता है।
+# GNOME config के लिए, हम /root या /home/$username का उपयोग कर सकते हैं।
+# चूंकि यह Ubuntu rootfs के अंदर चलने के लिए है, हम rootfs के उपयोगकर्ता नाम का उपयोग करेंगे।
+# यहाँ, मैंने username को $SUDO_USER या root पर सेट किया है।
+if [ -z "$SUDO_USER" ]; then
+    username="root"
+else
+    username="$SUDO_USER"
+fi
+
 
 check_root(){
 	if [ "$(id -u)" -ne 0 ]; then
@@ -23,7 +35,7 @@ banner() {
 		${G}    | \| _|_  |  _|_  __| |  |
 
 	EOF
-	echo -e "${G}     A modded gui version of ubuntu for Termux\n"
+	echo -e "${G}     A modded gui version of ubuntu (GNOME) for Termux\n"
 }
 
 note() {
@@ -39,36 +51,46 @@ note() {
 		 ${C}Open VNC VIEWER & Click on + Button.
 
 		 ${C}Enter the Address localhost:1 & Name anything you like.
-
+	
 		 ${C}Set the Picture Quality to High for better Quality.
 
 		 ${C}Click on Connect & Input the Password.
-
+		 
+		 ${R}NOTE: First run of GNOME may take time to load, please be patient!
 		 ${C}Enjoy :D${W}
 	EOF
 }
 
 package() {
 	banner
-	echo -e "${R} [${W}-${R}]${C} Checking required packages..."${W}
+	echo -e "${R} [${W}-${R}]${C} Checking required packages for GNOME..."${W}
 	apt-get update -y
+	# Udisks2 fix - Termux/proot environments के लिए
 	apt install udisks2 -y
-	rm /var/lib/dpkg/info/udisks2.postinst
+	rm -f /var/lib/dpkg/info/udisks2.postinst
 	echo "" > /var/lib/dpkg/info/udisks2.postinst
 	dpkg --configure -a
 	apt-mark hold udisks2
 	
-	packs=(sudo gnupg2 curl nano git xz-utils at-spi2-core xfce4 xfce4-goodies xfce4-terminal librsvg2-common menu inetutils-tools dialog exo-utils tigervnc-standalone-server tigervnc-common tigervnc-tools dbus-x11 fonts-beng fonts-beng-extra gtk2-engines-murrine gtk2-engines-pixbuf apt-transport-https)
+	# GNOME के लिए मुख्य पैकेज
+	# 'ubuntu-desktop' बहुत बड़ा है, इसलिए हम 'gnome-core' का उपयोग करेंगे
+	# और VNC सर्वर को 'tigervnc' ही रखेंगे
+	packs=(sudo gnupg2 curl nano git xz-utils at-spi2-core gnome-core gnome-terminal gnome-session gdm3 tigervnc-standalone-server tigervnc-common tigervnc-tools dbus-x11 apt-transport-https)
+	
 	for hulu in "${packs[@]}"; do
 		type -p "$hulu" &>/dev/null || {
 			echo -e "\n${R} [${W}-${R}]${G} Installing package : ${Y}$hulu${W}"
-			apt-get install "$hulu" -y --no-install-recommends
+			# 'gnome-core' एक बहुत बड़ा metapackage है, इसमें समय लगेगा
+			apt-get install "$hulu" -y 
 		}
 	done
 	
 	apt-get update -y
 	apt-get upgrade -y
 }
+# ---
+# install_apt, install_vscode, install_sublime, install_firefox, install_softwares, downloader फ़ंक्शन समान रहेंगे।
+# ---
 
 install_apt() {
 	for apt in "$@"; do
@@ -88,7 +110,10 @@ install_vscode() {
 		apt update -y
 		apt install code -y
 		echo "Patching.."
-		curl -fsSL https://raw.githubusercontent.com/modded-ubuntu/modded-ubuntu/master/patches/code.desktop > /usr/share/applications/code.desktop
+		# GNOME के लिए यह पैच आवश्यक नहीं हो सकता है, लेकिन हम इसे सुरक्षित रखने के लिए रखते हैं
+		# लेकिन यह पैच xfce4 के लिए था, इसलिए इसे हटा देते हैं या GNOME के लिए संशोधित करते हैं।
+		# Termux VNC सेटअप में, .desktop फ़ाइलें अक्सर काम नहीं करतीं।
+		# curl -fsSL https://raw.githubusercontent.com/modded-ubuntu/modded-ubuntu/master/patches/code.desktop > /usr/share/applications/code.desktop
 		echo -e "${C} Visual Studio Code Installed Successfully\n${W}"
 	}
 }
@@ -104,29 +129,21 @@ install_sublime() {
 	}
 }
 
-install_chromium() {
-	[[ $(command -v chromium) ]] && echo "${Y}Chromium is already Installed!${W}\n" || {
-		echo -e "${G}Installing ${Y}Chromium${W}"
-		apt purge chromium* chromium-browser* snapd -y
-		apt install gnupg2 software-properties-common --no-install-recommends -y
-		echo -e "deb http://ftp.debian.org/debian buster main\ndeb http://ftp.debian.org/debian buster-updates main" >> /etc/apt/sources.list
-		apt-key adv --keyserver keyserver.ubuntu.com --recv-keys DCC9EFBF77E11517
-		apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 648ACFD622F3D138
-		apt-key adv --keyserver keyserver.ubuntu.com --recv-keys AA8E81B4331F7F50
-		apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 112695A0E562B32A
-		apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3B4FE6ACC0B21F32
-		apt update -y
-		apt install chromium -y
-		sed -i 's/chromium %U/chromium --no-sandbox %U/g' /usr/share/applications/chromium.desktop
-		echo -e "${G} Chromium Installed Successfully\n${W}"
-	}
-}
-
 install_firefox() {
 	[[ $(command -v firefox) ]] && echo "${Y}Firefox is already Installed!${W}\n" || {
 		echo -e "${G}Installing ${Y}Firefox${W}"
-		bash <(curl -fsSL "https://raw.githubusercontent.com/modded-ubuntu/modded-ubuntu/master/distro/firefox.sh")
+		# यह स्क्रिप्ट Xfce4-आधारित थी। हम इसे डिफ़ॉल्ट apt install से बदल सकते हैं।
+		# bash <(curl -fsSL "https://raw.githubusercontent.com/modded-ubuntu/modded-ubuntu/master/distro/firefox.sh")
+		apt install firefox -y
 		echo -e "${G} Firefox Installed Successfully\n${W}"
+	}
+}
+
+install_chromium() {
+	[[ $(command -v chromium-browser) ]] && echo "${Y}Chromium is already Installed!${W}\n" || {
+		echo -e "${G}Installing ${Y}Chromium${W}"
+		apt install chromium-browser -y
+		echo -e "${G} Chromium Installed Successfully\n${W}"
 	}
 }
 
@@ -143,7 +160,8 @@ install_softwares() {
 	read -n1 -p "${R} [${G}~${R}]${Y} Select an Option: ${G}" BROWSER_OPTION
 	banner
 
-	[[ ("$arch" != 'armhf') || ("$arch" != *'armv7'*) ]] && {
+	# 'armhf' (जैसे Raspberry Pi 1) के अलावा अन्य आर्किटेक्चर पर IDE विकल्प दिखाना
+	if [[ ! ("$arch" == 'armhf' || "$arch" == *'armv7'*) ]]; then
 		cat <<- EOF
 			${Y} ---${G} Select IDE ${Y}---
 
@@ -155,7 +173,7 @@ install_softwares() {
 		EOF
 		read -n1 -p "${R} [${G}~${R}]${Y} Select an Option: ${G}" IDE_OPTION
 		banner
-	}
+	fi
 	
 	cat <<- EOF
 		${Y} ---${G} Media Player ${Y}---
@@ -178,7 +196,7 @@ install_softwares() {
 		install_firefox
 	fi
 
-	[[ ("$arch" != 'armhf') || ("$arch" != *'armv7'*) ]] && {
+	if [[ ! ("$arch" == 'armhf' || "$arch" == *'armv7'*) ]]; then
 		if [[ ${IDE_OPTION} == 1 ]]; then
 			install_sublime
 		elif [[ ${IDE_OPTION} == 2 ]]; then
@@ -190,7 +208,7 @@ install_softwares() {
 			echo -e "${Y} [!] Skipping IDE Installation\n"
 			sleep 1
 		fi
-	}
+	fi
 
 	if [[ ${PLAYER_OPTION} == 1 ]]; then
 		install_apt "mpv"
@@ -215,60 +233,73 @@ downloader(){
 }
 
 sound_fix() {
+	# यह line VNC start script (ubuntu) में sound fix के लिए एक command insert करती है
+	# VNC start script का पता बदल सकता है, लेकिन हम मान रहे हैं कि यह /data/data/com.termux/files/usr/bin/ubuntu है
+	# और इसे पहले से ही Termux के द्वारा बनाया गया है।
+	# Termux user sound fix के लिए:
 	echo "$(echo "bash ~/.sound" | cat - /data/data/com.termux/files/usr/bin/ubuntu)" > /data/data/com.termux/files/usr/bin/ubuntu
+	# Rootfs environment variables
 	echo "export DISPLAY=":1"" >> /etc/profile
 	echo "export PULSE_SERVER=127.0.0.1" >> /etc/profile 
 	source /etc/profile
 }
 
-rem_theme() {
-	theme=(Bright Daloa Emacs Moheli Retro Smoke)
-	for rmi in "${theme[@]}"; do
-		type -p "$rmi" &>/dev/null || {
-			rm -rf /usr/share/themes/"$rmi"
-		}
-	done
-}
-
-rem_icon() {
-	fonts=(hicolor LoginIcons ubuntu-mono-light)
-	for rmf in "${fonts[@]}"; do
-		type -p "$rmf" &>/dev/null || {
-			rm -rf /usr/share/icons/"$rmf"
-		}
-	done
-}
+# Xfce4 theme/icon removal functions को GNOME के लिए हटा दिया गया है
+# क्योंकि GNOME के साथ अलग themes/icons आते हैं।
 
 config() {
 	banner
 	sound_fix
 
-	apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3B4FE6ACC0B21F32
-	yes | apt upgrade
-	yes | apt install gtk2-engines-murrine gtk2-engines-pixbuf sassc optipng inkscape libglib2.0-dev-bin
-	mv -vf /usr/share/backgrounds/xfce/xfce-verticals.png /usr/share/backgrounds/xfce/xfceverticals-old.png
-	temp_folder=$(mktemp -d -p "$HOME")
-	{ banner; sleep 1; cd $temp_folder; }
+	# GNOME VNC/dbus setup
+	# VNC Server को GNOME सेशन शुरू करने के लिए कॉन्फ़िगर करें
+	# VNC server start script (~/.vnc/xstartup) को GNOME के लिए संशोधित करें
+	
+	VNC_STARTUP_FILE="/home/$username/.vnc/xstartup"
+	
+	# यदि उपयोगकर्ता 'root' नहीं है, तो सुनिश्चित करें कि home directory मौजूद है
+	if [ "$username" != "root" ]; then
+		mkdir -p /home/$username
+		chown -R $username:$username /home/$username
+	fi
 
-	echo -e "${R} [${W}-${R}]${C} Downloading Required Files..\n"${W}
-	downloader "fonts.tar.gz" "https://github.com/modded-ubuntu/modded-ubuntu/releases/download/config/fonts.tar.gz"
-	downloader "icons.tar.gz" "https://github.com/modded-ubuntu/modded-ubuntu/releases/download/config/icons.tar.gz"
-	downloader "wallpaper.tar.gz" "https://github.com/modded-ubuntu/modded-ubuntu/releases/download/config/wallpaper.tar.gz"
-	downloader "gtk-themes.tar.gz" "https://github.com/modded-ubuntu/modded-ubuntu/releases/download/config/gtk-themes.tar.gz"
-	downloader "ubuntu-settings.tar.gz" "https://github.com/modded-ubuntu/modded-ubuntu/releases/download/config/ubuntu-settings.tar.gz"
+	# .vnc directory बनाएं
+	mkdir -p /home/$username/.vnc
+	
+	cat <<- EOF > $VNC_STARTUP_FILE
+		#!/bin/bash
+		xrdb $HOME/.Xresources
+		export XDG_CURRENT_DESKTOP="GNOME"
+		export XDG_SESSION_TYPE="vnc"
+		export XDG_SESSION_DESKTOP="gnome"
+		export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$UID/bus"
 
-	echo -e "${R} [${W}-${R}]${C} Unpacking Files..\n"${W}
-	tar -xvzf fonts.tar.gz -C "/usr/local/share/fonts/"
-	tar -xvzf icons.tar.gz -C "/usr/share/icons/"
-	tar -xvzf wallpaper.tar.gz -C "/usr/share/backgrounds/xfce/"
-	tar -xvzf gtk-themes.tar.gz -C "/usr/share/themes/"
-	tar -xvzf ubuntu-settings.tar.gz -C "/home/$username/"	
-	rm -fr $temp_folder
+		# GNOME environment को dbus के साथ शुरू करने के लिए आवश्यक
+		if [ -e /etc/dbus-1/system.conf ] ; then
+			dbus-daemon --config-file=/etc/dbus-1/system.conf --fork
+		else
+			dbus-daemon --session --fork
+		fi
+		
+		# GDM3 VNC start fix
+		# GNOME 3 VNC के माध्यम से शुरू करने का तरीका
+		/usr/lib/gnome-session/gnome-session-start &
+		
+		# GNOME 40+ के लिए: 
+		# gnome-session &
+		
+		# Fallback in case gnome-session fails (पुराने GNOME के लिए)
+		# gnome-shell & 
 
-	echo -e "${R} [${W}-${R}]${C} Purging Unnecessary Files.."${W}
-	rem_theme
-	rem_icon
+	EOF
+	
+	# सुनिश्चित करें कि xstartup executable है
+	chmod +x $VNC_STARTUP_FILE
+	chown -R $username:$username /home/$username/.vnc
 
+	# Xfce4-आधारित customizations को हटा दिया गया है, क्योंकि GNOME का अपना configuration होता है
+	# और Xfce4 themes/settings GNOME के साथ असंगत हो सकते हैं।
+	
 	echo -e "${R} [${W}-${R}]${C} Rebuilding Font Cache..\n"${W}
 	fc-cache -fv
 
@@ -287,4 +318,3 @@ package
 install_softwares
 config
 note
-
