@@ -18,9 +18,9 @@ check_root(){
 banner() {
 	clear
 	cat <<- EOF
-		${Y}    _  _ ___  _  _ _  _ ___ _  _    _  _ ____ ___  
-		${C}    |  | |__] |  | |\ |  |  |  |    |\/| |  | |  \ 
-		${G}    |__| |__] |__| | \|  |  |__|    |  | |__| |__/ 
+		${Y}    _  _ ___ ___ ___  ___ _  _
+		${C}    |\ |  |   |   |  |__  |__|
+		${G}    | \| _|_  |  _|_  __| |  |
 
 	EOF
 	echo -e "${G}     A modded gui version of ubuntu for Termux\n"
